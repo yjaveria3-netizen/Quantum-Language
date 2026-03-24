@@ -18,7 +18,6 @@ file(GLOB_RECURSE QUANTUM_SOURCES CONFIGURE_DEPENDS "src/*.cpp")
 list(FILTER QUANTUM_SOURCES EXCLUDE REGEX ".*main_vm\\.cpp$")
 
 # ── quantum  — compiler + bundler  (quantum hello.sa → hello.exe) ─────────────
-#    Also runs hello.exe when it detects embedded bytecode in itself.
 add_executable(quantum ${QUANTUM_SOURCES})
 target_compile_definitions(quantum PRIVATE QUANTUM_MODE_COMPILER=1)
 if(WIN32)
@@ -26,15 +25,23 @@ if(WIN32)
 endif()
 
 # ── qrun  — pure interpreter  (qrun hello.sa → runs in-place, no .exe) ────────
-#    Same source tree; only the QRUN_MODE define changes behaviour in main.cpp.
 add_executable(qrun ${QUANTUM_SOURCES})
 target_compile_definitions(qrun PRIVATE QRUN_MODE=1)
 if(WIN32)
     target_link_libraries(qrun advapi32)
 endif()
 
+# ── quantum_stub  — standalone runner used as the .exe template ────────────────
+# Compiled WITHOUT any mode defines so it only runs embedded bytecode.
+# quantum.exe copies THIS file (not itself) when bundling hello.sa → hello.exe.
+add_executable(quantum_stub ${QUANTUM_SOURCES})
+# No compile definitions — this is the pure "run embedded bytecode" binary.
+if(WIN32)
+    target_link_libraries(quantum_stub advapi32)
+endif()
+
 message(STATUS "Quantum v2.0.0 — Bytecode VM")
 message(STATUS "  Sources  : ${QUANTUM_SOURCES}")
-message(STATUS "  Binaries : quantum  qrun")
+message(STATUS "  Binaries : quantum  qrun  quantum_stub")
 message(STATUS "  Compile  : quantum hello.sa   ->  hello.exe")
 message(STATUS "  Interpret: qrun    hello.sa   ->  runs directly")

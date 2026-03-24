@@ -317,30 +317,55 @@ static void printHelp(const char *prog)
              <<"  quantum hello.sa            → hello.exe created and run\n"
              <<"  qrun    hello.sa            → interpreted directly\n";
 }
+// ─── findStubPath ─────────────────────────────────────────────────────────────
+// Locate quantum_stub.exe relative to quantum.exe.
+// The stub is the "blank" runtime that gets hello.exe's bytecode appended to it.
+// Search order:
+//   1. Same directory as quantum.exe          (project root after build.bat)
+//   2. build\ sub-directory                   (raw CMake output)
+//   3. build\Release\ / build\Debug\          (MSVC multi-config)
+
+static std::string findStubPath(const std::string &quantumExePath)
+{
+    fs::path base = fs::path(quantumExePath).parent_path();
+
+    std::vector<fs::path> candidates = {
+        base / "quantum_stub.exe",
+        base / "build" / "quantum_stub.exe",
+        base / "build" / "Release" / "quantum_stub.exe",
+        base / "build" / "Debug"   / "quantum_stub.exe",
+    };
+
+    for (auto &p : candidates)
+        if (fs::exists(p))
+            return p.string();
+
+    return ""; // not found
+}
 
 // ─── bundleAndRun ─────────────────────────────────────────────────────────────
-// Compile .sa → bytecode → append to copy of quantum.exe → run the result
+// Compile .sa → bytecode → append to quantum_stub.exe → save as hello.exe → run
 
 static int bundleAndRun(const std::string &path, const std::string &exePath)
 {
     // 1. Read source
     std::ifstream src(path);
     if (!src.is_open()) {
-        std::cerr<<Colors::RED<<"[Error] "<<Colors::RESET<<"Cannot open: "<<path<<"\n";
+        std::cerr << Colors::RED << "[Error] " << Colors::RESET << "Cannot open: " << path << "\n";
         return 1;
     }
-    std::ostringstream ss; ss<<src.rdbuf();
+    std::ostringstream ss; ss << src.rdbuf();
 
     // 2. Compile
     std::shared_ptr<Chunk> chunk;
     try { chunk = compileSource(ss.str(), path, false); }
     catch (const ParseError &e) {
-        std::cerr<<Colors::RED<<Colors::BOLD<<"\n  X ParseError"<<Colors::RESET
-                 <<" in "<<path<<" at line "<<e.line<<":"<<e.col
-                 <<"\n    "<<e.what()<<"\n\n";
+        std::cerr << Colors::RED << Colors::BOLD << "\n  X ParseError" << Colors::RESET
+                  << " in " << path << " at line " << e.line << ":" << e.col
+                  << "\n    " << e.what() << "\n\n";
         return 1;
     } catch (const std::exception &e) {
-        std::cerr<<Colors::RED<<"[Compile Error] "<<Colors::RESET<<e.what()<<"\n";
+        std::cerr << Colors::RED << "[Compile Error] " << Colors::RESET << e.what() << "\n";
         return 1;
     }
 
@@ -348,19 +373,28 @@ static int bundleAndRun(const std::string &path, const std::string &exePath)
     auto payload = Serializer::serialize(chunk);
     uint32_t payloadSize = (uint32_t)payload.size();
 
-    // 4. Stub = quantum.exe itself (the file that is currently running)
-    //    We use exePath directly — no need to search.
-    std::string stub = exePath;
+    // 4. Locate the stub binary (quantum_stub.exe).
+    //    This is compiled WITHOUT QUANTUM_MODE_COMPILER, so when launched it
+    //    will find and execute the embedded bytecode rather than acting as a
+    //    compiler again.
+    std::string stub = findStubPath(exePath);
+    if (stub.empty()) {
+        std::cerr << Colors::RED << "[Error] " << Colors::RESET
+                  << "quantum_stub.exe not found.\n"
+                  << "  Expected it next to quantum.exe or in build\\\n"
+                  << "  Run build.bat to rebuild all three binaries.\n";
+        return 1;
+    }
 
-    // 5. Output path: hello.sa → hello.exe (in the same directory as the .sa)
+    // 5. Output path: hello.sa → hello.exe (same directory as the .sa file)
     fs::path srcPath(path);
     std::string outName = (srcPath.parent_path() / srcPath.stem()).string() + ".exe";
 
-    // Safety: never overwrite quantum.exe or qrun.exe
+    // Safety: never overwrite quantum.exe, qrun.exe, or quantum_stub.exe
     {
         std::string base = fs::path(outName).stem().string();
         std::transform(base.begin(), base.end(), base.begin(), ::tolower);
-        if (base == "quantum" || base == "qrun")
+        if (base == "quantum" || base == "qrun" || base == "quantum_stub")
             outName = (srcPath.parent_path() /
                        (srcPath.stem().string() + "_out")).string() + ".exe";
     }
@@ -368,17 +402,17 @@ static int bundleAndRun(const std::string &path, const std::string &exePath)
     // 6. Copy stub → output
     try { fs::copy_file(stub, outName, fs::copy_options::overwrite_existing); }
     catch (const std::exception &e) {
-        std::cerr<<Colors::RED<<"[Error] "<<Colors::RESET
-                 <<"Cannot create "<<outName<<": "<<e.what()<<"\n";
+        std::cerr << Colors::RED << "[Error] " << Colors::RESET
+                  << "Cannot create " << outName << ": " << e.what() << "\n";
         return 1;
     }
 
-    // 7. Append payload + size + magic
+    // 7. Append  [payload bytes]  [payloadSize: uint32_t LE]  [magic: "QNTM_VM!" 8 bytes]
     {
         std::ofstream out(outName, std::ios::binary | std::ios::app);
         if (!out) {
-            std::cerr<<Colors::RED<<"[Error] "<<Colors::RESET
-                     <<"Cannot open "<<outName<<" for appending\n";
+            std::cerr << Colors::RED << "[Error] " << Colors::RESET
+                      << "Cannot open " << outName << " for appending\n";
             return 1;
         }
         out.write(reinterpret_cast<const char*>(payload.data()), payloadSize);
@@ -386,11 +420,11 @@ static int bundleAndRun(const std::string &path, const std::string &exePath)
         out.write("QNTM_VM!", 8);
     }
 
-    std::cout<<Colors::GREEN<<"[Compiled] "<<Colors::RESET
-             <<path<<" -> "<<outName<<" ("<<payloadSize<<" bytes)\n";
+    std::cout << Colors::GREEN << "[Compiled] " << Colors::RESET
+              << path << " -> " << outName << " (" << payloadSize << " bytes)\n";
 
     // 8. Launch the generated exe and wait for it
-    std::cout<<Colors::CYAN<<"[Running]  "<<Colors::RESET<<outName<<"\n\n";
+    std::cout << Colors::CYAN << "[Running]  " << Colors::RESET << outName << "\n\n";
 
     STARTUPINFOA si{}; si.cb = sizeof(si);
     PROCESS_INFORMATION pi{};
@@ -398,8 +432,8 @@ static int bundleAndRun(const std::string &path, const std::string &exePath)
 
     if (!CreateProcessA(NULL, const_cast<char*>(cmd.c_str()),
                         NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi)) {
-        std::cerr<<Colors::RED<<"[Error] "<<Colors::RESET
-                 <<"Failed to launch "<<outName<<" (GetLastError="<<GetLastError()<<")\n";
+        std::cerr << Colors::RED << "[Error] " << Colors::RESET
+                  << "Failed to launch " << outName << " (GetLastError=" << GetLastError() << ")\n";
         return 1;
     }
     WaitForSingleObject(pi.hProcess, INFINITE);
