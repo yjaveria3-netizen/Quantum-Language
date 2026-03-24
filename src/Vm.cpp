@@ -1519,6 +1519,135 @@ void VM::registerNatives()
         for (size_t i=0;i<args.size();i++) { if(i) std::cout<<" "; std::cout<<args[i].toString(); }
         std::cout<<"\n";
         return QuantumValue(); });
+
+    // ── printf / sprintf (C-style format strings) ─────────────────────────
+    // Supported specifiers: %d %i %f %g %s %c %x %X %o %% and width/precision
+    // e.g.  printf("%d + %d = %d\n", a, b, a+b)
+    //        sprintf("%05.2f", 3.14)  → returns formatted string
+    auto quantumFormat = [](const std::string &fmt,
+                            const std::vector<QuantumValue> &args,
+                            size_t argStart) -> std::string
+    {
+        std::string out;
+        size_t argIdx = argStart;
+        for (size_t i = 0; i < fmt.size(); ++i)
+        {
+            if (fmt[i] != '%')
+            {
+                out += fmt[i];
+                continue;
+            }
+            ++i;
+            if (i >= fmt.size())
+                break;
+            if (fmt[i] == '%')
+            {
+                out += '%';
+                continue;
+            }
+
+            // Collect optional flags, width, precision
+            std::string spec = "%";
+            while (i < fmt.size() && (fmt[i] == '-' || fmt[i] == '+' ||
+                                      fmt[i] == ' ' || fmt[i] == '0' || fmt[i] == '#'))
+                spec += fmt[i++];
+            while (i < fmt.size() && std::isdigit((unsigned char)fmt[i]))
+                spec += fmt[i++];
+            if (i < fmt.size() && fmt[i] == '.')
+            {
+                spec += fmt[i++];
+                while (i < fmt.size() && std::isdigit((unsigned char)fmt[i]))
+                    spec += fmt[i++];
+            }
+            if (i >= fmt.size())
+                break;
+
+            char conv = fmt[i];
+            spec += conv;
+
+            QuantumValue arg;
+            if (argIdx < args.size())
+                arg = args[argIdx++];
+
+            char buf[128] = {};
+            switch (conv)
+            {
+            case 'd':
+            case 'i':
+                std::snprintf(buf, sizeof(buf), spec.c_str(), (long long)(arg.isNumber() ? arg.asNumber() : 0.0));
+                break;
+            case 'u':
+                std::snprintf(buf, sizeof(buf), spec.c_str(), (unsigned long long)(arg.isNumber() ? arg.asNumber() : 0.0));
+                break;
+            case 'f':
+            case 'F':
+            case 'e':
+            case 'E':
+            case 'g':
+            case 'G':
+                std::snprintf(buf, sizeof(buf), spec.c_str(), arg.isNumber() ? arg.asNumber() : 0.0);
+                break;
+            case 'x':
+            case 'X':
+            case 'o':
+                std::snprintf(buf, sizeof(buf), spec.c_str(), (unsigned long long)(arg.isNumber() ? arg.asNumber() : 0.0));
+                break;
+            case 'c':
+            {
+                char ch = arg.isNumber() ? (char)(int)arg.asNumber()
+                                         : (arg.isString() && !arg.asString().empty() ? arg.asString()[0] : '?');
+                std::snprintf(buf, sizeof(buf), spec.c_str(), ch);
+                break;
+            }
+            case 's':
+            {
+                std::string sv = arg.isNil() ? "(nil)" : arg.toString();
+                // Replace %s spec with correct snprintf call
+                std::string fmtS = spec; // e.g. "%-10s"
+                // snprintf with string
+                std::vector<char> tmp(sv.size() + 256);
+                std::snprintf(tmp.data(), tmp.size(), fmtS.c_str(), sv.c_str());
+                out += tmp.data();
+                continue;
+            }
+            default:
+                out += spec;
+                continue;
+            }
+            out += buf;
+        }
+        return out;
+    };
+
+    reg("printf", [quantumFormat](std::vector<QuantumValue> args) -> QuantumValue
+        {
+        if (args.empty()) return QuantumValue();
+        if (!args[0].isString()) {
+            // No format string — behave like print
+            for (size_t i = 0; i < args.size(); i++) { if (i) std::cout << " "; std::cout << args[i].toString(); }
+            std::cout << "\n";
+            return QuantumValue();
+        }
+        std::string result = quantumFormat(args[0].asString(), args, 1);
+        std::cout << result;
+        std::cout.flush();
+        return QuantumValue(); });
+
+    reg("sprintf", [quantumFormat](std::vector<QuantumValue> args) -> QuantumValue
+        {
+        if (args.empty() || !args[0].isString()) return QuantumValue(std::string(""));
+        return QuantumValue(quantumFormat(args[0].asString(), args, 1)); });
+
+    reg("fprintf", [quantumFormat](std::vector<QuantumValue> args) -> QuantumValue
+        {
+        // fprintf(stderr, fmt, ...) or fprintf(stdout, fmt, ...)
+        // first arg treated as stream hint (string "stderr"/"stdout"), rest as printf
+        if (args.size() < 2) return QuantumValue();
+        bool isErr = args[0].isString() && args[0].asString() == "stderr";
+        std::string result = quantumFormat(args[1].asString(), args, 2);
+        if (isErr) std::cerr << result;
+        else       std::cout << result;
+        return QuantumValue(); });
     reg("enumerate", [](std::vector<QuantumValue> args) -> QuantumValue
         {
         if (args.empty()) throw RuntimeError("enumerate() requires 1 argument");

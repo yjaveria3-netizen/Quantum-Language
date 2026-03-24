@@ -10,14 +10,14 @@ C:\Programming\Quantum Language\src\Parser.cpp:1954:73: warning: missing initial
  1954 |     return std::make_unique<ASTNode>(InputStmt{target, std::move(prompt)}, ln);
       |                                                                         ^
 C:\Programming\Quantum Language\src\Vm.cpp: In lambda function:
-C:\Programming\Quantum Language\src\Vm.cpp:1638:15: warning: suggest explicit braces to avoid ambiguous 'else' [-Wdangling-else]
- 1638 |             if(step>0) for(int i=start;i<stop;i+=step) if(i<len) r+=s[i];
+C:\Programming\Quantum Language\src\Vm.cpp:1767:15: warning: suggest explicit braces to avoid ambiguous 'else' [-Wdangling-else]
+ 1767 |             if(step>0) for(int i=start;i<stop;i+=step) if(i<len) r+=s[i];
       |               ^
-C:\Programming\Quantum Language\src\Vm.cpp:1648:15: warning: suggest explicit braces to avoid ambiguous 'else' [-Wdangling-else]
- 1648 |             if(step>0) for(int i=start;i<stop;i+=step) if(i<len) r->push_back(arr[i]);
+C:\Programming\Quantum Language\src\Vm.cpp:1777:15: warning: suggest explicit braces to avoid ambiguous 'else' [-Wdangling-else]
+ 1777 |             if(step>0) for(int i=start;i<stop;i+=step) if(i<len) r->push_back(arr[i]);
       |               ^
-C:\Programming\Quantum Language\src\main.cpp:55:31: warning: 'std::shared_ptr<Chunk> loadEmbeddedBytecode(const std::string&)' defined but not used [-Wunused-function]
-   55 | static std::shared_ptr<Chunk> loadEmbeddedBytecode(const std::string &exePath)
+C:\Programming\Quantum Language\src\main.cpp:59:31: warning: 'std::shared_ptr<Chunk> loadEmbeddedBytecode(const std::string&)' defined but not used [-Wunused-function]
+   59 | static std::shared_ptr<Chunk> loadEmbeddedBytecode(const std::string &exePath)
       |                               ^~~~~~~~~~~~~~~~~~~~
 C:\Programming\Quantum Language\src\Lexer.cpp:382:45: warning: multi-character character constant [-Wmultichar]
   382 |                     if (!inDoubleQ && ch == '\'\'' && !inFormat)
@@ -31,14 +31,14 @@ C:\Programming\Quantum Language\src\Parser.cpp:1954:73: warning: missing initial
  1954 |     return std::make_unique<ASTNode>(InputStmt{target, std::move(prompt)}, ln);
       |                                                                         ^
 C:\Programming\Quantum Language\src\Vm.cpp: In lambda function:
-C:\Programming\Quantum Language\src\Vm.cpp:1638:15: warning: suggest explicit braces to avoid ambiguous 'else' [-Wdangling-else]
- 1638 |             if(step>0) for(int i=start;i<stop;i+=step) if(i<len) r+=s[i];
+C:\Programming\Quantum Language\src\Vm.cpp:1767:15: warning: suggest explicit braces to avoid ambiguous 'else' [-Wdangling-else]
+ 1767 |             if(step>0) for(int i=start;i<stop;i+=step) if(i<len) r+=s[i];
       |               ^
-C:\Programming\Quantum Language\src\Vm.cpp:1648:15: warning: suggest explicit braces to avoid ambiguous 'else' [-Wdangling-else]
- 1648 |             if(step>0) for(int i=start;i<stop;i+=step) if(i<len) r->push_back(arr[i]);
+C:\Programming\Quantum Language\src\Vm.cpp:1777:15: warning: suggest explicit braces to avoid ambiguous 'else' [-Wdangling-else]
+ 1777 |             if(step>0) for(int i=start;i<stop;i+=step) if(i<len) r->push_back(arr[i]);
       |               ^
-C:\Programming\Quantum Language\src\main.cpp:55:31: warning: 'std::shared_ptr<Chunk> loadEmbeddedBytecode(const std::string&)' defined but not used [-Wunused-function]
-   55 | static std::shared_ptr<Chunk> loadEmbeddedBytecode(const std::string &exePath)
+C:\Programming\Quantum Language\src\main.cpp:59:31: warning: 'std::shared_ptr<Chunk> loadEmbeddedBytecode(const std::string&)' defined but not used [-Wunused-function]
+   59 | static std::shared_ptr<Chunk> loadEmbeddedBytecode(const std::string &exePath)
       |                               ^~~~~~~~~~~~~~~~~~~~
 C:\Programming\Quantum Language\src\Lexer.cpp:382:45: warning: multi-character character constant [-Wmultichar]
   382 |                     if (!inDoubleQ && ch == '\'\'' && !inFormat)
@@ -52,9 +52,9 @@ C:\Programming\Quantum Language\src\Parser.cpp:1954:73: warning: missing initial
  1954 |     return std::make_unique<ASTNode>(InputStmt{target, std::move(prompt)}, ln);
       |                                                                         ^
 C:\Programming\Quantum Language\src\Vm.cpp: In lambda function:
-C:\Programming\Quantum Language\src\Vm.cpp:1638:15: warning: suggest explicit braces to avoid ambiguous 'else' [-Wdangling-else]
- 1638 |             if(step>0) for(int i=start;i<stop;i+=step) if(i<len) r+=s[i];
+C:\Programming\Quantum Language\src\Vm.cpp:1767:15: warning: suggest explicit braces to avoid ambiguous 'else' [-Wdangling-else]
+ 1767 |             if(step>0) for(int i=start;i<stop;i+=step) if(i<len) r+=s[i];
       |               ^
-C:\Programming\Quantum Language\src\Vm.cpp:1648:15: warning: suggest explicit braces to avoid ambiguous 'else' [-Wdangling-else]
- 1648 |             if(step>0) for(int i=start;i<stop;i+=step) if(i<len) r->push_back(arr[i]);
+C:\Programming\Quantum Language\src\Vm.cpp:1777:15: warning: suggest explicit braces to avoid ambiguous 'else' [-Wdangling-else]
+ 1777 |             if(step>0) for(int i=start;i<stop;i+=step) if(i<len) r->push_back(arr[i]);
       |               ^
