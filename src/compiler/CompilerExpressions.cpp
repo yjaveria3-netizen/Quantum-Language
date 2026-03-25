@@ -25,6 +25,16 @@ void Compiler::compileBinary(BinaryExpr &e, int line)
         patchJump(sc);
         return;
     }
+    if (e.op == "in" || e.op == "not in")
+    {
+        emit(Op::LOAD_GLOBAL, addStr("__contains__"), line);
+        compileExpr(*e.left);
+        compileExpr(*e.right);
+        emit(Op::CALL, 2, line);
+        if (e.op == "not in")
+            emit(Op::NOT, 0, line);
+        return;
+    }
 
     compileExpr(*e.left);
     compileExpr(*e.right);
@@ -61,6 +71,12 @@ void Compiler::compileBinary(BinaryExpr &e, int line)
 
 void Compiler::compileUnary(UnaryExpr &e, int line)
 {
+    if (e.op == "...")
+    {
+        compileExpr(*e.operand);
+        return;
+    }
+
     compileExpr(*e.operand);
     if (e.op == "-")
         emit(Op::NEG, 0, line);
@@ -86,7 +102,11 @@ void Compiler::compileUnary(UnaryExpr &e, int line)
 
 void Compiler::compileAssign(AssignExpr &e, int line)
 {
-    bool compound = (e.op != "=");
+    const std::string normalizedOp =
+        e.op == "post+=" ? "+=" :
+        e.op == "post-=" ? "-=" :
+        e.op;
+    bool compound = (normalizedOp != "=");
 
     static const std::unordered_map<std::string, Op> cops = {
         {"+=", Op::ADD},
@@ -102,12 +122,22 @@ void Compiler::compileAssign(AssignExpr &e, int line)
     if (e.target->is<Identifier>())
     {
         const std::string &name = e.target->as<Identifier>().name;
+        if (e.op == "post+=" || e.op == "post-=")
+        {
+            emitLoad(name, line);
+            emit(Op::DUP, 0, line);
+            compileExpr(*e.value);
+            emit(e.op == "post+=" ? Op::ADD : Op::SUB, 0, line);
+            emitStore(name, line);
+            emit(Op::POP, 0, line);
+            return;
+        }
         if (compound)
             emitLoad(name, line);
         compileExpr(*e.value);
         if (compound)
         {
-            auto it = cops.find(e.op);
+            auto it = cops.find(normalizedOp);
             if (it != cops.end())
                 emit(it->second, 0, line);
         }
@@ -150,6 +180,41 @@ void Compiler::compileAssign(AssignExpr &e, int line)
 
 void Compiler::compileCall(CallExpr &e, int line)
 {
+    bool hasSpread = false;
+    for (auto &arg : e.args)
+    {
+        if (arg->is<UnaryExpr>())
+        {
+            const auto &unary = arg->as<UnaryExpr>();
+            if (unary.op == "..." || unary.op == "**")
+            {
+                hasSpread = true;
+                break;
+            }
+        }
+    }
+
+    if (hasSpread)
+    {
+        emit(Op::LOAD_GLOBAL, addStr("__call_spread__"), line);
+        compileExpr(*e.callee);
+        emit(Op::MAKE_ARRAY, 0, line);
+        for (auto &arg : e.args)
+        {
+            bool isSpread = arg->is<UnaryExpr>() &&
+                            (arg->as<UnaryExpr>().op == "..." || arg->as<UnaryExpr>().op == "**");
+            emit(Op::LOAD_GLOBAL, addStr(isSpread ? "__array_extend__" : "__listcomp_push__"), line);
+            emit(Op::SWAP, 0, line);
+            if (isSpread)
+                compileExpr(*arg->as<UnaryExpr>().operand);
+            else
+                compileExpr(*arg);
+            emit(Op::CALL, 2, line);
+        }
+        emit(Op::CALL, 2, line);
+        return;
+    }
+
     // super.method(args) -- special case
     if (e.callee->is<MemberExpr>())
     {
@@ -213,6 +278,33 @@ void Compiler::compileMember(MemberExpr &e, int line)
 
 void Compiler::compileArray(ArrayLiteral &e, int line)
 {
+    bool hasSpread = false;
+    for (auto &el : e.elements)
+    {
+        if (el->is<UnaryExpr>() && el->as<UnaryExpr>().op == "...")
+        {
+            hasSpread = true;
+            break;
+        }
+    }
+
+    if (hasSpread)
+    {
+        emit(Op::MAKE_ARRAY, 0, line);
+        for (auto &el : e.elements)
+        {
+            bool isSpread = el->is<UnaryExpr>() && el->as<UnaryExpr>().op == "...";
+            emit(Op::LOAD_GLOBAL, addStr(isSpread ? "__array_extend__" : "__listcomp_push__"), line);
+            emit(Op::SWAP, 0, line);
+            if (isSpread)
+                compileExpr(*el->as<UnaryExpr>().operand);
+            else
+                compileExpr(*el);
+            emit(Op::CALL, 2, line);
+        }
+        return;
+    }
+
     for (auto &el : e.elements)
         compileExpr(*el);
     emit(Op::MAKE_ARRAY, static_cast<int32_t>(e.elements.size()), line);
@@ -220,6 +312,38 @@ void Compiler::compileArray(ArrayLiteral &e, int line)
 
 void Compiler::compileDict(DictLiteral &e, int line)
 {
+    bool hasSpread = false;
+    for (auto &[k, v] : e.pairs)
+    {
+        if (!k)
+        {
+            hasSpread = true;
+            break;
+        }
+    }
+
+    if (hasSpread)
+    {
+        emit(Op::MAKE_DICT, 0, line);
+        for (auto &[k, v] : e.pairs)
+        {
+            if (!k)
+            {
+                emit(Op::LOAD_GLOBAL, addStr("__dict_merge__"), line);
+                emit(Op::SWAP, 0, line);
+                compileExpr(*v);
+                emit(Op::CALL, 2, line);
+                continue;
+            }
+            emit(Op::LOAD_GLOBAL, addStr("__dict_set__"), line);
+            emit(Op::SWAP, 0, line);
+            compileExpr(*k);
+            compileExpr(*v);
+            emit(Op::CALL, 3, line);
+        }
+        return;
+    }
+
     for (auto &[k, v] : e.pairs)
     {
         compileExpr(*k);

@@ -489,8 +489,9 @@ void VM::runFrame(size_t stopDepth)
                 if (i < 0)
                     i += (int)arr.size();
                 if (i < 0 || i >= (int)arr.size())
-                    throw IndexError("Array index out of range: " + std::to_string(i), line);
-                push(arr[i]);
+                    push(QuantumValue());
+                else
+                    push(arr[i]);
             }
             else if (obj.isString())
             {
@@ -499,8 +500,9 @@ void VM::runFrame(size_t stopDepth)
                 if (i < 0)
                     i += (int)s.size();
                 if (i < 0 || i >= (int)s.size())
-                    throw IndexError("String index out of range", line);
-                push(QuantumValue(std::string(1, s[i])));
+                    push(QuantumValue());
+                else
+                    push(QuantumValue(std::string(1, s[i])));
             }
             else if (obj.isDict())
             {
@@ -610,6 +612,25 @@ void VM::runFrame(size_t stopDepth)
                 if (it != d.end())
                 {
                     push(it->second);
+                    break;
+                }
+            }
+
+            if (name == "length" || name == "size")
+            {
+                if (obj.isArray())
+                {
+                    push(QuantumValue((double)obj.asArray()->size()));
+                    break;
+                }
+                if (obj.isString())
+                {
+                    push(QuantumValue((double)obj.asString().size()));
+                    break;
+                }
+                if (obj.isDict())
+                {
+                    push(QuantumValue((double)obj.asDict()->size()));
                     break;
                 }
             }
@@ -756,6 +777,17 @@ void VM::runFrame(size_t stopDepth)
         {
             int argCount = instr.operand;
             QuantumValue callee = stack_[stack_.size() - argCount - 1];
+            if (callee.isNative())
+            {
+                std::vector<QuantumValue> args;
+                args.reserve(argCount);
+                for (int i = 0; i < argCount; ++i)
+                    args.push_back(stack_[stack_.size() - argCount + i]);
+                for (int i = 0; i <= argCount; ++i)
+                    stack_.pop_back();
+                push(callee.asNative()->fn(args));
+                break;
+            }
             if (!callee.isClass())
                 throw TypeError("new: expected class, got " + callee.typeName(), line);
 

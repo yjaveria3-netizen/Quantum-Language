@@ -172,6 +172,21 @@ void Compiler::compileNode(ASTNode &node)
 
 void Compiler::compileBlock(BlockStmt &b)
 {
+    if (current_->scopeDepth > 0)
+    {
+        for (auto &stmt : b.statements)
+        {
+            if (!stmt->is<FunctionDecl>())
+                continue;
+            auto &fn = stmt->as<FunctionDecl>();
+            if (resolveLocal(current_, fn.name) != -1)
+                continue;
+            emit(Op::LOAD_NIL, 0, stmt->line);
+            declareLocal(fn.name, stmt->line);
+            emit(Op::DEFINE_LOCAL, static_cast<int>(current_->locals.size()) - 1, stmt->line);
+        }
+    }
+
     for (auto &stmt : b.statements)
         compileNode(*stmt);
 }

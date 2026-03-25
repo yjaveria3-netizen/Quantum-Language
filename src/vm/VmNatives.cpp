@@ -88,6 +88,18 @@ void VM::registerNatives()
             catch (...) { return QuantumValue(0.0); }
         }
         return QuantumValue(0.0); });
+    reg("parseFloat", [](std::vector<QuantumValue> args) -> QuantumValue
+        {
+        if (args.empty()) return QuantumValue(std::numeric_limits<double>::quiet_NaN());
+        if (args[0].isNumber()) return args[0];
+        try { return QuantumValue(std::stod(args[0].toString())); }
+        catch (...) { return QuantumValue(std::numeric_limits<double>::quiet_NaN()); } });
+    reg("parseInt", [](std::vector<QuantumValue> args) -> QuantumValue
+        {
+        if (args.empty()) return QuantumValue(std::numeric_limits<double>::quiet_NaN());
+        if (args[0].isNumber()) return QuantumValue(std::floor(args[0].asNumber()));
+        try { return QuantumValue(std::floor(std::stod(args[0].toString()))); }
+        catch (...) { return QuantumValue(std::numeric_limits<double>::quiet_NaN()); } });
     reg("str", [](std::vector<QuantumValue> args) -> QuantumValue
         {
         if (args.empty()) return QuantumValue(std::string(""));
@@ -192,6 +204,83 @@ void VM::registerNatives()
         for (size_t i=0;i<args.size();i++) { if(i) std::cout<<" "; std::cout<<args[i].toString(); }
         std::cout<<"\n";
         return QuantumValue(); });
+    reg("__contains__", [](std::vector<QuantumValue> args) -> QuantumValue
+        {
+        if (args.size() < 2) return QuantumValue(false);
+        const QuantumValue &needle = args[0];
+        const QuantumValue &haystack = args[1];
+        if (haystack.isArray()) {
+            for (auto &v : *haystack.asArray())
+                if (VM::valuesEqual(v, needle))
+                    return QuantumValue(true);
+            return QuantumValue(false);
+        }
+        if (haystack.isDict())
+            return QuantumValue(haystack.asDict()->count(needle.toString()) > 0);
+        if (haystack.isString())
+            return QuantumValue(haystack.asString().find(needle.toString()) != std::string::npos);
+        return QuantumValue(false); });
+    reg("__array_extend__", [](std::vector<QuantumValue> args) -> QuantumValue
+        {
+        if (args.size() < 2 || !args[0].isArray()) return QuantumValue();
+        auto arr = args[0].asArray();
+        const QuantumValue &source = args[1];
+        if (source.isArray()) {
+            for (auto &v : *source.asArray())
+                arr->push_back(v);
+        } else if (source.isString()) {
+            for (char c : source.asString())
+                arr->push_back(QuantumValue(std::string(1, c)));
+        } else if (source.isDict()) {
+            for (auto &[k, v] : *source.asDict())
+                arr->push_back(QuantumValue(k));
+        } else if (!source.isNil()) {
+            arr->push_back(source);
+        }
+        return QuantumValue(arr); });
+    reg("__dict_set__", [](std::vector<QuantumValue> args) -> QuantumValue
+        {
+        if (args.size() < 3 || !args[0].isDict()) return QuantumValue();
+        (*args[0].asDict())[args[1].toString()] = args[2];
+        return args[0]; });
+    reg("__dict_merge__", [](std::vector<QuantumValue> args) -> QuantumValue
+        {
+        if (args.size() < 2 || !args[0].isDict()) return QuantumValue();
+        auto dict = args[0].asDict();
+        if (args[1].isDict())
+            for (auto &[k, v] : *args[1].asDict())
+                (*dict)[k] = v;
+        return QuantumValue(dict); });
+    reg("__call_spread__", [this](std::vector<QuantumValue> args) -> QuantumValue
+        {
+        if (args.size() < 2 || !args[1].isArray())
+            throw RuntimeError("__call_spread__ requires a callee and array arguments");
+        QuantumValue callee = args[0];
+        std::vector<QuantumValue> callArgs = *args[1].asArray();
+        if (callee.isNative())
+            return callee.asNative()->fn(callArgs);
+        if (callee.isFunction()) {
+            push(callee);
+            for (auto &arg : callArgs)
+                push(arg);
+            callClosure(callee.asFunction(), static_cast<int>(callArgs.size()), 0);
+            size_t depth = frames_.size() - 1;
+            runFrame(depth);
+            return pop();
+        }
+        if (callee.isBoundMethod()) {
+            auto bm = callee.asBoundMethod();
+            push(bm->self);
+            for (auto &arg : callArgs)
+                push(arg);
+            callClosure(bm->method, static_cast<int>(callArgs.size()) + 1, 0);
+            size_t depth = frames_.size() - 1;
+            runFrame(depth);
+            return pop();
+        }
+        throw TypeError("Cannot spread-call value of type " + callee.typeName()); });
+    reg("Map", [](std::vector<QuantumValue>) -> QuantumValue
+        { return QuantumValue(std::make_shared<Dict>()); });
 
     // ── printf / sprintf (C-style format strings) ─────────────────────────
     // Supported specifiers: %d %i %f %g %s %c %x %X %o %% and width/precision
@@ -619,12 +708,14 @@ void VM::registerNatives()
         mathReg("min", [](std::vector<QuantumValue> a)
                 {
             if (a.empty()) throw RuntimeError("Math.min expected args");
+            if (a.size() == 1 && a[0].isArray()) a = *a[0].asArray();
             double m = toNum2(a[0],"Math.min");
             for (size_t i=1;i<a.size();i++) m=std::min(m,toNum2(a[i],"Math.min"));
             return QuantumValue(m); });
         mathReg("max", [](std::vector<QuantumValue> a)
                 {
             if (a.empty()) throw RuntimeError("Math.max expected args");
+            if (a.size() == 1 && a[0].isArray()) a = *a[0].asArray();
             double m = toNum2(a[0],"Math.max");
             for (size_t i=1;i<a.size();i++) m=std::max(m,toNum2(a[i],"Math.max"));
             return QuantumValue(m); });

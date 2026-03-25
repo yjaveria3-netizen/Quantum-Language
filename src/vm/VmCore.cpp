@@ -53,6 +53,8 @@ void VM::run(std::shared_ptr<Chunk> chunk)
     stepCount_ = 0;
     pendingInstances_.clear();
     stack_.clear();
+    if (stack_.capacity() < 65536)
+        stack_.reserve(65536);
     frames_.clear();
     handlers_.clear();
 
@@ -339,14 +341,11 @@ void VM::callClosure(std::shared_ptr<Closure> closure, int argCount, int line)
 {
     auto &ch = *closure->chunk;
 
-    if (argCount < (int)ch.params.size())
+    while (argCount < (int)ch.params.size())
     {
         // Fill missing args with nil (default arg logic simplified)
-        while ((int)stack_.size() - argCount < (int)ch.params.size())
-        {
-            push(QuantumValue());
-            argCount++;
-        }
+        push(QuantumValue());
+        argCount++;
     }
 
     size_t stackBase = stack_.size() - argCount;
@@ -435,6 +434,20 @@ void VM::callClass(std::shared_ptr<QuantumClass> klass, int argCount, int line)
 QuantumValue VM::callBuiltinMethod(QuantumValue &obj, const std::string &method,
                                    std::vector<QuantumValue> args, int line)
 {
+    if (obj.isNumber())
+    {
+        if (method == "toFixed")
+        {
+            int places = args.empty() ? 0 : static_cast<int>(args[0].asNumber());
+            if (places < 0)
+                places = 0;
+            std::ostringstream out;
+            out << std::fixed << std::setprecision(places) << obj.asNumber();
+            return QuantumValue(out.str());
+        }
+        if (method == "toString")
+            return QuantumValue(obj.toString());
+    }
     if (obj.isArray())
         return callArrayMethod(obj.asArray(), method, args);
     if (obj.isString())

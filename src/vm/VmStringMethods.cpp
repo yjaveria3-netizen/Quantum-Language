@@ -4,6 +4,8 @@
 #include <cctype>
 #include <limits>
 #include <memory>
+#include <regex>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -192,6 +194,32 @@ QuantumValue VM::callStringMethod(const std::string &str, const std::string &m,
             result = result.substr(0, p) + args[idx++].toString() + result.substr(p + 2);
         }
         return QuantumValue(result);
+    }
+    if (m == "test")
+    {
+        if (args.empty())
+            return QuantumValue(false);
+        if (str.size() >= 2 && str.front() == '/')
+        {
+            size_t lastSlash = str.find_last_of('/');
+            if (lastSlash != 0 && lastSlash != std::string::npos)
+            {
+                std::string pattern = str.substr(1, lastSlash - 1);
+                std::string flags = str.substr(lastSlash + 1);
+                std::regex::flag_type regexFlags = std::regex::ECMAScript;
+                if (flags.find('i') != std::string::npos)
+                    regexFlags |= std::regex::icase;
+                try
+                {
+                    return QuantumValue(std::regex_search(args[0].toString(), std::regex(pattern, regexFlags)));
+                }
+                catch (const std::regex_error &)
+                {
+                    return QuantumValue(args[0].toString().find(pattern) != std::string::npos);
+                }
+            }
+        }
+        return QuantumValue(args[0].toString().find(str) != std::string::npos);
     }
     if (m == "count")
     {

@@ -35,8 +35,17 @@ void Compiler::compileFunctionDecl(FunctionDecl &s, int line)
     }
     else
     {
-        declareLocal(s.name, line);
-        emit(Op::DEFINE_LOCAL, static_cast<int>(current_->locals.size()) - 1, line);
+        int existingSlot = resolveLocal(current_, s.name);
+        if (existingSlot != -1 && current_->locals[existingSlot].depth == current_->scopeDepth)
+        {
+            emit(Op::STORE_LOCAL, existingSlot, line);
+            emit(Op::POP, 0, line);
+        }
+        else
+        {
+            declareLocal(s.name, line);
+            emit(Op::DEFINE_LOCAL, static_cast<int>(current_->locals.size()) - 1, line);
+        }
     }
 }
 

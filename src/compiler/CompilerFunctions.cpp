@@ -3,6 +3,7 @@
 #include "Vm.h"
 #include <stdexcept>
 #include <algorithm>
+#include <cctype>
 #include <unordered_map>
 
 std::shared_ptr<Chunk> Compiler::compileFunction(
@@ -26,6 +27,44 @@ std::shared_ptr<Chunk> Compiler::compileFunction(
     fnState.chunk->paramIsRef = paramIsRef.empty()
                                     ? std::vector<bool>(params.size(), false)
                                     : paramIsRef;
+
+    for (size_t paramIndex = 0; paramIndex < params.size(); ++paramIndex)
+    {
+        const std::string &param = params[paramIndex];
+        if (param.size() < 2 || param.front() != '[' || param.back() != ']')
+            continue;
+
+        std::string currentName;
+        int elementIndex = 0;
+        auto flushElement = [&]()
+        {
+            if (currentName.empty())
+            {
+                ++elementIndex;
+                return;
+            }
+            emit(Op::LOAD_LOCAL, static_cast<int32_t>(paramIndex), line);
+            emit(Op::LOAD_CONST, addConst(QuantumValue(static_cast<double>(elementIndex))), line);
+            emit(Op::GET_INDEX, 0, line);
+            declareLocal(currentName, line);
+            emit(Op::DEFINE_LOCAL, static_cast<int>(current_->locals.size()) - 1, line);
+            currentName.clear();
+            ++elementIndex;
+        };
+
+        for (size_t i = 1; i + 1 < param.size(); ++i)
+        {
+            char ch = param[i];
+            if (ch == ',')
+            {
+                flushElement();
+                continue;
+            }
+            if (!std::isspace(static_cast<unsigned char>(ch)))
+                currentName += ch;
+        }
+        flushElement();
+    }
 
     if (body)
     {
