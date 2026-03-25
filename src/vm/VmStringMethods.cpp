@@ -82,6 +82,24 @@ QuantumValue VM::callStringMethod(const std::string &str, const std::string &m,
         }
         return QuantumValue(arr);
     }
+    if (m == "join")
+    {
+        if (args.empty())
+            return QuantumValue(str);
+        if (args[0].isArray())
+        {
+            std::string out;
+            auto arr = args[0].asArray();
+            for (size_t i = 0; i < arr->size(); ++i)
+            {
+                if (i)
+                    out += str;
+                out += (*arr)[i].toString();
+            }
+            return QuantumValue(out);
+        }
+        return QuantumValue(args[0].toString());
+    }
     if (m == "replace")
     {
         if (args.size() < 2)

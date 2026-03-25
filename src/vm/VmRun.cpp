@@ -344,9 +344,6 @@ void VM::runFrame(size_t stopDepth)
                 inst->env = std::make_shared<Environment>(globals);
                 QuantumValue instVal(inst);
 
-                // Replace the class on stack with the instance (becomes 'self' and callee slot)
-                stack_[stack_.size() - argCount - 1] = instVal;
-
                 auto *k = klass.get();
                 bool initFound = false;
                 while (k && !initFound)
@@ -356,7 +353,8 @@ void VM::runFrame(size_t stopDepth)
                         auto it = k->methods.find(initName);
                         if (it != k->methods.end())
                         {
-                            // Track that this call-frame depth should return the instance
+                            size_t calleeIndex = stack_.size() - argCount - 1;
+                            stack_.insert(stack_.begin() + calleeIndex + 1, instVal);
                             pendingInstances_.push_back({instVal, frames_.size()});
                             callClosure(it->second, argCount + 1, line);
                             initFound = true;
@@ -369,8 +367,8 @@ void VM::runFrame(size_t stopDepth)
 
                 if (!initFound)
                 {
-                    // No constructor, result is just the instance
-                    // instVal is already at [size - argCount - 1]
+                    size_t calleeIndex = stack_.size() - argCount - 1;
+                    stack_[calleeIndex] = instVal;
                     for (int i = 0; i < argCount; ++i)
                         stack_.pop_back();
                 }
@@ -395,7 +393,8 @@ void VM::runFrame(size_t stopDepth)
             if (callee.isBoundMethod())
             {
                 auto bm = callee.asBoundMethod();
-                stack_[stack_.size() - argCount - 1] = bm->self; // replace callee with self
+                size_t calleeIndex = stack_.size() - argCount - 1;
+                stack_.insert(stack_.begin() + calleeIndex + 1, bm->self);
                 callClosure(bm->method, argCount + 1, line);
                 break;
             }
@@ -661,6 +660,8 @@ void VM::runFrame(size_t stopDepth)
                 obj.asInstance()->setField(name, val);
             else if (obj.isClass())
                 obj.asClass()->staticFields[name] = val;
+            else if (obj.isDict())
+                (*obj.asDict())[name] = val;
             else
                 throw TypeError("Cannot set member on " + obj.typeName(), line);
             break;
@@ -752,9 +753,8 @@ void VM::runFrame(size_t stopDepth)
         case Op::INHERIT:
         {
             QuantumValue base = pop();
-            if (!base.isClass())
-                throw TypeError("Base must be a class", line);
-            peek(0).asClass()->base = base.asClass();
+            if (base.isClass())
+                peek(0).asClass()->base = base.asClass();
             break;
         }
 
@@ -788,6 +788,34 @@ void VM::runFrame(size_t stopDepth)
                 push(callee.asNative()->fn(args));
                 break;
             }
+            if (callee.isDict())
+            {
+                auto dict = callee.asDict();
+                auto ctorIt = dict->find("__new__");
+                if (ctorIt != dict->end())
+                {
+                    std::vector<QuantumValue> args;
+                    args.reserve(argCount);
+                    for (int i = 0; i < argCount; ++i)
+                        args.push_back(stack_[stack_.size() - argCount + i]);
+                    for (int i = 0; i <= argCount; ++i)
+                        stack_.pop_back();
+
+                    QuantumValue ctor = ctorIt->second;
+                    if (ctor.isNative())
+                        push(ctor.asNative()->fn(args));
+                    else if (ctor.isFunction())
+                    {
+                        push(ctor);
+                        for (auto &arg : args)
+                            push(arg);
+                        callClosure(ctor.asFunction(), static_cast<int>(args.size()), line);
+                    }
+                    else
+                        throw TypeError("new: __new__ is not callable", line);
+                    break;
+                }
+            }
             if (!callee.isClass())
                 throw TypeError("new: expected class, got " + callee.typeName(), line);
 
@@ -796,9 +824,6 @@ void VM::runFrame(size_t stopDepth)
             inst->klass = klass;
             inst->env = std::make_shared<Environment>(globals);
             QuantumValue instVal(inst);
-
-            // Replace the class on stack with the instance (becomes 'self' and callee slot)
-            stack_[stack_.size() - argCount - 1] = instVal;
 
             auto *k = klass.get();
             bool initFound = false;
@@ -809,7 +834,8 @@ void VM::runFrame(size_t stopDepth)
                     auto it = k->methods.find(initName);
                     if (it != k->methods.end())
                     {
-                        // Track that this call-frame depth should return the instance
+                        size_t calleeIndex = stack_.size() - argCount - 1;
+                        stack_.insert(stack_.begin() + calleeIndex + 1, instVal);
                         pendingInstances_.push_back({instVal, frames_.size()});
                         callClosure(it->second, argCount + 1, line);
                         initFound = true;
@@ -822,8 +848,8 @@ void VM::runFrame(size_t stopDepth)
 
             if (!initFound)
             {
-                // No constructor, result is just the instance
-                // instVal is already at [size - argCount - 1]
+                size_t calleeIndex = stack_.size() - argCount - 1;
+                stack_[calleeIndex] = instVal;
                 for (int i = 0; i < argCount; ++i)
                     stack_.pop_back();
             }

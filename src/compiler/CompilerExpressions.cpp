@@ -61,6 +61,7 @@ void Compiler::compileBinary(BinaryExpr &e, int line)
         {"<<", Op::LSHIFT},
         {">>", Op::RSHIFT},
         {"is", Op::EQ},
+        {"is not", Op::NEQ},
     };
     auto it = opMap.find(e.op);
     if (it != opMap.end())
@@ -118,6 +119,23 @@ void Compiler::compileAssign(AssignExpr &e, int line)
         {"|=", Op::BIT_OR},
         {"^=", Op::BIT_XOR},
     };
+
+    if (e.op == "unpack" && e.target->is<TupleLiteral>())
+    {
+        compileExpr(*e.value);
+        for (size_t i = 0; i < e.target->as<TupleLiteral>().elements.size(); ++i)
+        {
+            auto &target = e.target->as<TupleLiteral>().elements[i];
+            if (!target->is<Identifier>())
+                continue;
+            emit(Op::DUP, 0, line);
+            emit(Op::LOAD_CONST, addConst(QuantumValue(static_cast<double>(i))), line);
+            emit(Op::GET_INDEX, 0, line);
+            emitStore(target->as<Identifier>().name, line);
+            emit(Op::POP, 0, line);
+        }
+        return;
+    }
 
     if (e.target->is<Identifier>())
     {
@@ -180,6 +198,20 @@ void Compiler::compileAssign(AssignExpr &e, int line)
 
 void Compiler::compileCall(CallExpr &e, int line)
 {
+    auto emitArgValue = [&](ASTNode &arg)
+    {
+        if (arg.is<AssignExpr>())
+        {
+            auto &assign = arg.as<AssignExpr>();
+            if (assign.op == "=" && assign.target->is<Identifier>())
+            {
+                compileExpr(*assign.value);
+                return;
+            }
+        }
+        compileExpr(arg);
+    };
+
     bool hasSpread = false;
     for (auto &arg : e.args)
     {
@@ -208,7 +240,7 @@ void Compiler::compileCall(CallExpr &e, int line)
             if (isSpread)
                 compileExpr(*arg->as<UnaryExpr>().operand);
             else
-                compileExpr(*arg);
+                emitArgValue(*arg);
             emit(Op::CALL, 2, line);
         }
         emit(Op::CALL, 2, line);
@@ -225,22 +257,35 @@ void Compiler::compileCall(CallExpr &e, int line)
             emitLoad("self", line);
             emit(Op::GET_SUPER, addStr(mem.member), line);
             for (auto &arg : e.args)
-                compileExpr(*arg);
+                emitArgValue(*arg);
             emit(Op::CALL, static_cast<int32_t>(e.args.size()), line);
             return;
+        }
+        if (mem.object->is<CallExpr>())
+        {
+            auto &superCall = mem.object->as<CallExpr>();
+            if (superCall.callee->is<SuperExpr>() && superCall.callee->as<SuperExpr>().method.empty())
+            {
+                emitLoad("self", line);
+                emit(Op::GET_SUPER, addStr(mem.member), line);
+                for (auto &arg : e.args)
+                    emitArgValue(*arg);
+                emit(Op::CALL, static_cast<int32_t>(e.args.size()), line);
+                return;
+            }
         }
         // Regular method call: obj.method(args)
         compileExpr(*mem.object);
         emit(Op::GET_MEMBER, addStr(mem.member), line);
         for (auto &arg : e.args)
-            compileExpr(*arg);
+            emitArgValue(*arg);
         emit(Op::CALL, static_cast<int32_t>(e.args.size()), line);
         return;
     }
     // Regular call
     compileExpr(*e.callee);
     for (auto &arg : e.args)
-        compileExpr(*arg);
+        emitArgValue(*arg);
     emit(Op::CALL, static_cast<int32_t>(e.args.size()), line);
 }
 

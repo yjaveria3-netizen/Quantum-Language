@@ -17,8 +17,13 @@ QuantumValue VM::callArrayMethod(std::shared_ptr<Array> arr, const std::string &
     {
         if (arr->empty())
             throw RuntimeError("pop() on empty array");
-        QuantumValue v = arr->back();
-        arr->pop_back();
+        int idx = args.empty() ? (int)arr->size() - 1 : (int)args[0].asNumber();
+        if (idx < 0)
+            idx += (int)arr->size();
+        if (idx < 0 || idx >= (int)arr->size())
+            throw RuntimeError("pop() index out of range");
+        QuantumValue v = (*arr)[idx];
+        arr->erase(arr->begin() + idx);
         return v;
     }
     if (m == "length" || m == "size")
@@ -209,13 +214,11 @@ QuantumValue VM::callArrayMethod(std::shared_ptr<Array> arr, const std::string &
         if (fn.isBoundMethod())
         {
             auto bm = fn.asBoundMethod();
-            std::vector<QuantumValue> allArgs = {bm->self};
-            for (auto &a : fnArgs)
-                allArgs.push_back(a);
+            push(fn);
             push(bm->self);
             for (auto &a : fnArgs)
                 push(a);
-            callClosure(bm->method, (int)allArgs.size(), 0);
+            callClosure(bm->method, (int)fnArgs.size() + 1, 0);
             size_t depth = frames_.size() - 1;
             runFrame(depth);
             return pop();

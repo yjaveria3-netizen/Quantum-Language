@@ -199,6 +199,22 @@ QuantumValue VM::execBinary(Op op, const QuantumValue &L, const QuantumValue &R,
                 s += L.asString();
             return QuantumValue(s);
         }
+        if (L.isArray() && R.isNumber())
+        {
+            auto out = std::make_shared<Array>();
+            int count = std::max(0, static_cast<int>(r));
+            for (int i = 0; i < count; ++i)
+                out->insert(out->end(), L.asArray()->begin(), L.asArray()->end());
+            return QuantumValue(out);
+        }
+        if (L.isNumber() && R.isArray())
+        {
+            auto out = std::make_shared<Array>();
+            int count = std::max(0, static_cast<int>(l));
+            for (int i = 0; i < count; ++i)
+                out->insert(out->end(), R.asArray()->begin(), R.asArray()->end());
+            return QuantumValue(out);
+        }
         return QuantumValue(l * r);
     case Op::DIV:
         if (r == 0)
@@ -315,22 +331,8 @@ void VM::callValue(QuantumValue callee, int argCount, int line)
     if (callee.isBoundMethod())
     {
         auto bm = callee.asBoundMethod();
-        std::vector<QuantumValue> args;
-        for (int i = 0; i < argCount; ++i)
-            args.push_back(stack_[stack_.size() - argCount + i]);
-        for (int i = 0; i < argCount; ++i)
-            stack_.pop_back();
-        // The callee itself was on the stack before args, pop it!
-        // But what if the compiler didn't push the callee? wait, Op::CALL expects callee on stack underneath args!
-        // It's checked during CALL instruction: QuantumValue callee = stack_[stack_.size() - argCount - 1];
-        // However callValue modifies the stack natively? No, callValue doesn't pop the callee.
-        // Wait, callNativeFn pops args but NOT callee.
-        // Op::CALL pops args AND callee afterwards? Let's check callClosure.
-        // callClosure does not pop args or callee. It just sets stackBase = stack_.size() - argCount.
-        // The callee is left on the stack at slot 0 of the new frame!
-        // So for BoundMethod, we need to overwrite the callee slot with 'self', then push args.
-        // Actually, frame's slot 0 should be 'self' instead of the BoundMethod object.
-        stack_[stack_.size() - argCount - 1] = bm->self;
+        size_t calleeIndex = stack_.size() - argCount - 1;
+        stack_.insert(stack_.begin() + calleeIndex + 1, bm->self);
         callClosure(bm->method, argCount + 1, line);
         return;
     }
@@ -409,24 +411,17 @@ void VM::callClass(std::shared_ptr<QuantumClass> klass, int argCount, int line)
 
     if (initFn)
     {
-        std::vector<QuantumValue> newArgs = {instVal};
-        for (int i = argCount - 1; i >= 0; --i)
-            newArgs.push_back(stack_[stack_.size() - argCount + i]);
-        for (int i = 0; i < argCount; ++i)
-            stack_.pop_back();
-        // Replace callee with 'self' is not needed here as we are doing manual frame push? No, we just need to replace it on the stack.
-        // Actually, pop callee.
-        stack_.pop_back();
-        for (auto &a : newArgs)
-            push(a);
-        callClosure(initFn, (int)newArgs.size(), line);
+        size_t calleeIndex = stack_.size() - argCount - 1;
+        stack_.insert(stack_.begin() + calleeIndex + 1, instVal);
+        pendingInstances_.push_back({instVal, frames_.size()});
+        callClosure(initFn, argCount + 1, line);
         return;
     }
 
-    // No init — pop args, push instance
+    size_t calleeIndex = stack_.size() - argCount - 1;
+    stack_[calleeIndex] = instVal;
     for (int i = 0; i < argCount; ++i)
         stack_.pop_back();
-    push(instVal);
 }
 
 // ─── Built-in method dispatch ─────────────────────────────────────────────────
@@ -448,6 +443,19 @@ QuantumValue VM::callBuiltinMethod(QuantumValue &obj, const std::string &method,
         if (method == "toString")
             return QuantumValue(obj.toString());
     }
+    if (obj.isNative())
+    {
+        if (method == "then" || method == "catch" || method == "json")
+        {
+            auto native = obj.asNative();
+            if (native->fn)
+                return native->fn(args);
+            return method == "json" ? QuantumValue(std::make_shared<Dict>()) : obj;
+        }
+        if (method == "receive_email" || method == "list_emails" ||
+            method == "read_email" || method == "delete_email")
+            return QuantumValue();
+    }
     if (obj.isArray())
         return callArrayMethod(obj.asArray(), method, args);
     if (obj.isString())
@@ -465,8 +473,7 @@ QuantumValue VM::callBuiltinMethod(QuantumValue &obj, const std::string &method,
             if (it != k->methods.end())
             {
                 auto fn = it->second;
-                // Pop the args and the object from stack? No, callBuiltinMethod is normally called natively.
-                // It receives obj and args as parameters.
+                push(QuantumValue(fn));
                 push(obj);
                 for (auto &a : args)
                     push(a);

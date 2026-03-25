@@ -60,8 +60,40 @@ void Compiler::compileClassDecl(ClassDecl &s, int line)
         emit(Op::INHERIT, 0, line);
     }
 
+    auto bindClassField = [&](ASTNodePtr &member)
+    {
+        if (member->is<VarDecl>())
+        {
+            auto &field = member->as<VarDecl>();
+            if (field.initializer)
+                compileExpr(*field.initializer);
+            else
+                emit(Op::LOAD_NIL, 0, member->line);
+            emit(Op::BIND_METHOD, addStr(field.name), member->line);
+            return true;
+        }
+        if (member->is<ExprStmt>() &&
+            member->as<ExprStmt>().expr &&
+            member->as<ExprStmt>().expr->is<AssignExpr>())
+        {
+            auto &assign = member->as<ExprStmt>().expr->as<AssignExpr>();
+            if (assign.target->is<Identifier>())
+            {
+                compileExpr(*assign.value);
+                emit(Op::BIND_METHOD, addStr(assign.target->as<Identifier>().name), member->line);
+                return true;
+            }
+        }
+        return false;
+    };
+
+    for (auto &field : s.fields)
+        bindClassField(field);
+
     for (auto &method : s.methods)
     {
+        if (bindClassField(method))
+            continue;
         if (!method->is<FunctionDecl>())
             continue;
         auto &fd = method->as<FunctionDecl>();
@@ -71,9 +103,19 @@ void Compiler::compileClassDecl(ClassDecl &s, int line)
         // "this" references are resolved to "self" by emitLoad/emitStore.
         std::vector<std::string> methodParams;
         std::vector<bool> methodRefs;
-        methodParams.push_back("self");
-        methodRefs.push_back(false);
-        for (size_t i = 0; i < fd.params.size(); ++i)
+        size_t startIndex = 0;
+        if (fd.params.empty() || (fd.params[0] != "self" && fd.params[0] != "this"))
+        {
+            methodParams.push_back("self");
+            methodRefs.push_back(false);
+        }
+        else
+        {
+            methodParams.push_back("self");
+            methodRefs.push_back(!fd.paramIsRef.empty() && fd.paramIsRef[0]);
+            startIndex = 1;
+        }
+        for (size_t i = startIndex; i < fd.params.size(); ++i)
         {
             methodParams.push_back(fd.params[i]);
             methodRefs.push_back(i < fd.paramIsRef.size() ? fd.paramIsRef[i] : false);
