@@ -15,6 +15,7 @@
 #include <unordered_set>
 #include <cctype>
 #include <cstdio>
+#include <fstream>
 
 extern bool g_testMode;
 
@@ -48,6 +49,8 @@ static std::string defaultTestInput(const std::vector<QuantumValue> &args)
         return "";
     if (lower.find("enter command") != std::string::npos)
         return "q";
+    if (lower.find("rock/paper/scissors") != std::string::npos)
+        return "rock";
     if (lower.find("play again") != std::string::npos)
         return "n";
     if (lower.find("(y/n)") != std::string::npos)
@@ -67,6 +70,21 @@ static std::string defaultTestInput(const std::vector<QuantumValue> &args)
     return "";
 }
 
+static QuantumValue defaultTestInputValue(const std::vector<QuantumValue> &args, bool formatAware)
+{
+    std::string prompt = args.empty() ? "" : args[0].toString();
+    if (formatAware)
+    {
+        if (prompt.find("%d") != std::string::npos || prompt.find("%i") != std::string::npos)
+            return QuantumValue(0.0);
+        if (prompt.find("%f") != std::string::npos || prompt.find("%g") != std::string::npos)
+            return QuantumValue(0.0);
+        if (prompt.find("%c") != std::string::npos)
+            return QuantumValue(std::string("?"));
+    }
+    return QuantumValue(defaultTestInput(args));
+}
+
 void VM::registerNatives()
 {
     auto reg = [&](const std::string &name, QuantumNativeFunc fn)
@@ -80,14 +98,14 @@ void VM::registerNatives()
     // ── I/O ───────────────────────────────────────────────────────────────
     reg("__input__", [](std::vector<QuantumValue> args) -> QuantumValue
         {
-        if (g_testMode) return QuantumValue(defaultTestInput(args));
+        if (g_testMode) return defaultTestInputValue(args, true);
         if (!args.empty()) std::cout << args[0].toString();
         std::string line;
         std::getline(std::cin, line);
         return QuantumValue(line); });
     reg("input", [](std::vector<QuantumValue> args) -> QuantumValue
         {
-        if (g_testMode) return QuantumValue(defaultTestInput(args));
+        if (g_testMode) return defaultTestInputValue(args, false);
         if (!args.empty()) std::cout << args[0].toString();
         std::string line;
         std::getline(std::cin, line);
@@ -180,6 +198,23 @@ void VM::registerNatives()
         {
         if (args.empty()) return QuantumValue(std::string(""));
         return QuantumValue(args[0].toString()); });
+    reg("hex", [](std::vector<QuantumValue> args) -> QuantumValue
+        {
+        long long value = 0;
+        if (!args.empty())
+            value = args[0].isNumber() ? static_cast<long long>(args[0].asNumber())
+                                       : static_cast<long long>(std::stod(args[0].toString()));
+        std::ostringstream out;
+        out << "0x" << std::hex << std::nouppercase << value;
+        return QuantumValue(out.str()); });
+    reg("randint", [](std::vector<QuantumValue> args) -> QuantumValue
+        {
+        static std::mt19937_64 rng(std::random_device{}());
+        long long lo = args.empty() ? 0 : static_cast<long long>(args[0].asNumber());
+        long long hi = args.size() > 1 ? static_cast<long long>(args[1].asNumber()) : lo;
+        if (lo > hi) std::swap(lo, hi);
+        std::uniform_int_distribution<long long> dist(lo, hi);
+        return QuantumValue(static_cast<double>(dist(rng))); });
     reg("__format__", [](std::vector<QuantumValue> args) -> QuantumValue
         {
         if (args.empty()) return QuantumValue(std::string(""));
@@ -296,6 +331,17 @@ void VM::registerNatives()
         if (args.empty()) throw RuntimeError("type() requires 1 argument");
         if (args[0].isInstance()) return QuantumValue(args[0].asInstance()->klass);
         if (args[0].isClass()) return args[0];
+        return QuantumValue(args[0].typeName()); });
+    reg("typeof", [](std::vector<QuantumValue> args) -> QuantumValue
+        {
+        if (args.empty() || args[0].isNil()) return QuantumValue(std::string("undefined"));
+        if (args[0].isBool()) return QuantumValue(std::string("boolean"));
+        if (args[0].isNumber()) return QuantumValue(std::string("number"));
+        if (args[0].isString()) return QuantumValue(std::string("string"));
+        if (args[0].isArray() || args[0].isDict() || args[0].isInstance() || args[0].isClass())
+            return QuantumValue(std::string("object"));
+        if (args[0].isNative() || args[0].isFunction() || args[0].isBoundMethod())
+            return QuantumValue(std::string("function"));
         return QuantumValue(args[0].typeName()); });
     reg("range", [](std::vector<QuantumValue> args) -> QuantumValue
         {
@@ -966,6 +1012,7 @@ void VM::registerNatives()
         (*mathDict)["PI"] = QuantumValue(M_PI);
         (*mathDict)["E"] = QuantumValue(M_E);
         globals->define("Math", QuantumValue(mathDict));
+        globals->define("math", QuantumValue(mathDict));
     }
 
     // ── Object utility (Object.keys, Object.values, Object.entries) ───────
@@ -1041,6 +1088,14 @@ void VM::registerNatives()
 
     {
         auto stringDict = std::make_shared<Dict>();
+        auto ctor = std::make_shared<QuantumNative>();
+        ctor->name = "String";
+        ctor->fn = [](std::vector<QuantumValue> args) -> QuantumValue
+        {
+            if (args.empty())
+                return QuantumValue(std::string(""));
+            return QuantumValue(args[0].toString());
+        };
         auto nat = std::make_shared<QuantumNative>();
         nat->name = "String.fromCharCode";
         nat->fn = [](std::vector<QuantumValue> args) -> QuantumValue
@@ -1050,6 +1105,7 @@ void VM::registerNatives()
                 out += static_cast<char>(static_cast<int>(arg.asNumber()));
             return QuantumValue(out);
         };
+        (*stringDict)["__call__"] = QuantumValue(ctor);
         (*stringDict)["fromCharCode"] = QuantumValue(nat);
         globals->define("String", QuantumValue(stringDict));
     }
@@ -1308,10 +1364,87 @@ void VM::registerNatives()
             return QuantumValue(response);
         };
         globals->define("fetch", QuantumValue(fetchNative));
+
+        auto stdoutDict = std::make_shared<Dict>();
+        auto writeNative = std::make_shared<QuantumNative>();
+        writeNative->name = "process.stdout.write";
+        writeNative->fn = [](std::vector<QuantumValue> args) -> QuantumValue
+        {
+            if (!args.empty())
+                std::cout << args[0].toString();
+            return QuantumValue();
+        };
+        (*stdoutDict)["write"] = QuantumValue(writeNative);
+        auto processDict = std::make_shared<Dict>();
+        (*processDict)["stdout"] = QuantumValue(stdoutDict);
+        globals->define("process", QuantumValue(processDict));
+
+        auto setDict = std::make_shared<Dict>();
+        auto setNew = std::make_shared<QuantumNative>();
+        setNew->name = "Set.__new__";
+        setNew->fn = [](std::vector<QuantumValue> args) -> QuantumValue
+        {
+            auto setObj = std::make_shared<Dict>();
+            auto values = std::make_shared<std::unordered_set<std::string>>();
+            auto ordered = std::make_shared<Array>();
+
+            auto addValue = [values, ordered](const QuantumValue &value)
+            {
+                std::string key = value.toString();
+                if (values->insert(key).second)
+                    ordered->push_back(value);
+            };
+
+            if (!args.empty() && args[0].isArray())
+                for (auto &value : *args[0].asArray())
+                    addValue(value);
+
+            auto addNative = std::make_shared<QuantumNative>();
+            addNative->name = "Set.add";
+            addNative->fn = [setObj, values, ordered, addValue](std::vector<QuantumValue> callArgs) -> QuantumValue
+            {
+                if (!callArgs.empty())
+                    addValue(callArgs[0]);
+                (*setObj)["size"] = QuantumValue((double)values->size());
+                return QuantumValue(setObj);
+            };
+            auto hasNative = std::make_shared<QuantumNative>();
+            hasNative->name = "Set.has";
+            hasNative->fn = [values](std::vector<QuantumValue> callArgs) -> QuantumValue
+            {
+                if (callArgs.empty())
+                    return QuantumValue(false);
+                return QuantumValue(values->count(callArgs[0].toString()) > 0);
+            };
+            (*setObj)["add"] = QuantumValue(addNative);
+            (*setObj)["has"] = QuantumValue(hasNative);
+            (*setObj)["size"] = QuantumValue((double)values->size());
+            (*setObj)["values"] = QuantumValue(ordered);
+            return QuantumValue(setObj);
+        };
+        (*setDict)["__new__"] = QuantumValue(setNew);
+        globals->define("Set", QuantumValue(setDict));
     }
 
     {
         auto arrayDict = std::make_shared<Dict>();
+        auto ctor = std::make_shared<QuantumNative>();
+        ctor->name = "Array";
+        ctor->fn = [](std::vector<QuantumValue> args) -> QuantumValue
+        {
+            auto result = std::make_shared<Array>();
+            if (args.empty())
+                return QuantumValue(result);
+            if (args.size() == 1 && args[0].isNumber())
+            {
+                int n = std::max(0, static_cast<int>(args[0].asNumber()));
+                result->resize(n);
+                return QuantumValue(result);
+            }
+            for (auto &arg : args)
+                result->push_back(arg);
+            return QuantumValue(result);
+        };
         auto nat = std::make_shared<QuantumNative>();
         nat->name = "Array.from";
         nat->fn = [this](std::vector<QuantumValue> args) -> QuantumValue
@@ -1390,8 +1523,76 @@ void VM::registerNatives()
 
             return QuantumValue(result);
         };
+        (*arrayDict)["__call__"] = QuantumValue(ctor);
         (*arrayDict)["from"] = QuantumValue(nat);
         globals->define("Array", QuantumValue(arrayDict));
+    }
+
+    {
+        auto randomDict = std::make_shared<Dict>();
+        auto randomNat = std::make_shared<QuantumNative>();
+        randomNat->name = "random.random";
+        randomNat->fn = [](std::vector<QuantumValue>) -> QuantumValue
+        {
+            static std::mt19937_64 rng(std::random_device{}());
+            std::uniform_real_distribution<double> dist(0.0, 1.0);
+            return QuantumValue(dist(rng));
+        };
+        auto randintNat = std::make_shared<QuantumNative>();
+        randintNat->name = "random.randint";
+        randintNat->fn = [](std::vector<QuantumValue> args) -> QuantumValue
+        {
+            static std::mt19937_64 rng(std::random_device{}());
+            long long lo = args.empty() ? 0 : static_cast<long long>(args[0].asNumber());
+            long long hi = args.size() > 1 ? static_cast<long long>(args[1].asNumber()) : lo;
+            if (lo > hi) std::swap(lo, hi);
+            std::uniform_int_distribution<long long> dist(lo, hi);
+            return QuantumValue(static_cast<double>(dist(rng)));
+        };
+        auto sampleNat = std::make_shared<QuantumNative>();
+        sampleNat->name = "random.sample";
+        sampleNat->fn = [](std::vector<QuantumValue> args) -> QuantumValue
+        {
+            auto out = std::make_shared<Array>();
+            if (args.size() < 2 || !args[0].isArray())
+                return QuantumValue(out);
+            auto pool = *args[0].asArray();
+            int k = std::max(0, static_cast<int>(args[1].asNumber()));
+            static std::mt19937_64 rng(std::random_device{}());
+            std::shuffle(pool.begin(), pool.end(), rng);
+            for (int i = 0; i < k && i < static_cast<int>(pool.size()); ++i)
+                out->push_back(pool[i]);
+            return QuantumValue(out);
+        };
+        (*randomDict)["random"] = QuantumValue(randomNat);
+        (*randomDict)["randint"] = QuantumValue(randintNat);
+        (*randomDict)["sample"] = QuantumValue(sampleNat);
+        globals->define("random", QuantumValue(randomDict));
+    }
+
+    {
+        auto timeDict = std::make_shared<Dict>();
+        auto timeNat = std::make_shared<QuantumNative>();
+        timeNat->name = "time.time";
+        timeNat->fn = [](std::vector<QuantumValue>) -> QuantumValue
+        {
+            auto now = std::chrono::system_clock::now().time_since_epoch();
+            return QuantumValue(std::chrono::duration<double>(now).count());
+        };
+        auto sleepNat = std::make_shared<QuantumNative>();
+        sleepNat->name = "time.sleep";
+        sleepNat->fn = [](std::vector<QuantumValue> args) -> QuantumValue
+        {
+            if (!args.empty())
+            {
+                int ms = static_cast<int>(args[0].asNumber() * 1000.0);
+                std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+            }
+            return QuantumValue();
+        };
+        (*timeDict)["time"] = QuantumValue(timeNat);
+        (*timeDict)["sleep"] = QuantumValue(sleepNat);
+        globals->define("time", QuantumValue(timeDict));
     }
 
     {
@@ -1736,6 +1937,13 @@ void VM::registerNatives()
             int id = (*nextTimerId)++;
             (*activeTimers)[id] = true;
             double delay = args.size() > 1 && args[1].isNumber() ? args[1].asNumber() : 0.0;
+            if (g_testMode)
+            {
+                *nowMs += delay;
+                if (!args.empty() && (*activeTimers)[id])
+                    invoke(args[0], {});
+                return QuantumValue((double)id);
+            }
             int guard = 0;
             while ((*activeTimers)[id] && guard++ < 10000)
             {
@@ -1751,6 +1959,27 @@ void VM::registerNatives()
                 (*activeTimers)[(int)args[0].asNumber()] = false;
             return QuantumValue(); });
     }
+
+    reg("write_file", [](std::vector<QuantumValue> args) -> QuantumValue
+        {
+        if (args.size() < 2)
+            return QuantumValue(false);
+        std::ofstream out(args[0].toString(), std::ios::binary);
+        if (!out)
+            return QuantumValue(false);
+        out << args[1].toString();
+        return QuantumValue(true); });
+
+    reg("read_file", [](std::vector<QuantumValue> args) -> QuantumValue
+        {
+        if (args.empty())
+            return QuantumValue();
+        std::ifstream in(args[0].toString(), std::ios::binary);
+        if (!in)
+            return QuantumValue();
+        std::ostringstream buffer;
+        buffer << in.rdbuf();
+        return QuantumValue(buffer.str()); });
 
     // ── console object (JavaScript compatibility) ─────────────────────────
     // console.log, console.error, console.warn, console.info
@@ -2455,10 +2684,32 @@ void VM::registerNatives()
 
     // ── Time ─────────────────────────────────────────────────────────────
     // time() — Unix timestamp in seconds (as double)
-    reg("time", [](std::vector<QuantumValue>) -> QuantumValue
+    {
+        auto timeFn = std::make_shared<QuantumNative>();
+        timeFn->name = "time";
+        timeFn->fn = [](std::vector<QuantumValue>) -> QuantumValue
         {
-        auto now = std::chrono::system_clock::now().time_since_epoch();
-        return QuantumValue(std::chrono::duration<double>(now).count()); });
+            auto now = std::chrono::system_clock::now().time_since_epoch();
+            return QuantumValue(std::chrono::duration<double>(now).count());
+        };
+        try
+        {
+            QuantumValue timeVal = globals->get("time");
+            if (timeVal.isDict())
+            {
+                (*timeVal.asDict())["__call__"] = QuantumValue(timeFn);
+                (*timeVal.asDict())["now"] = QuantumValue(timeFn);
+            }
+            else
+            {
+                globals->define("time", QuantumValue(timeFn));
+            }
+        }
+        catch (...)
+        {
+            globals->define("time", QuantumValue(timeFn));
+        }
+    }
 
     // clock() — monotonic high-resolution time in seconds (for benchmarking)
     reg("clock", [](std::vector<QuantumValue>) -> QuantumValue

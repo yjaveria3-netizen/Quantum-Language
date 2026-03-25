@@ -306,6 +306,3 @@ QuantumValue VM::callArrayMethod(std::shared_ptr<Array> arr, const std::string &
 
     throw TypeError("Array has no method '" + m + "'");
 }
-
-// ─── String methods ───────────────────────────────────────────────────────────
-

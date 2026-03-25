@@ -313,6 +313,18 @@ void VM::closeUpvalues(size_t fromIdx)
 
 void VM::callValue(QuantumValue callee, int argCount, int line)
 {
+    if (callee.isDict())
+    {
+        auto dict = callee.asDict();
+        auto it = dict->find("__call__");
+        if (it != dict->end())
+        {
+            size_t calleeIndex = stack_.size() - argCount - 1;
+            stack_[calleeIndex] = it->second;
+            callValue(it->second, argCount, line);
+            return;
+        }
+    }
     if (callee.isNative())
     {
         callNativeFn(callee.asNative(), argCount, line);
@@ -387,23 +399,22 @@ void VM::callClass(std::shared_ptr<QuantumClass> klass, int argCount, int line)
     inst->klass = klass;
     inst->env = std::make_shared<Environment>(globals);
 
-    // Look for __init__ / init
+    // Look for __init__ / init / constructor
     auto *k = klass.get();
     std::shared_ptr<Closure> initFn;
     while (k)
     {
-        auto it = k->methods.find("__init__");
-        if (it != k->methods.end())
+        for (const char *initName : {"__init__", "init", "constructor"})
         {
-            initFn = it->second;
-            break;
+            auto it = k->methods.find(initName);
+            if (it != k->methods.end())
+            {
+                initFn = it->second;
+                break;
+            }
         }
-        it = k->methods.find("init");
-        if (it != k->methods.end())
-        {
-            initFn = it->second;
+        if (initFn)
             break;
-        }
         k = k->base.get();
     }
 
@@ -445,9 +456,22 @@ QuantumValue VM::callBuiltinMethod(QuantumValue &obj, const std::string &method,
     }
     if (obj.isNative())
     {
+        auto native = obj.asNative();
+        if (native->name == "str" && method == "maketrans")
+        {
+            auto table = std::make_shared<Dict>();
+            if (args.size() >= 2)
+            {
+                std::string from = args[0].toString();
+                std::string to = args[1].toString();
+                size_t count = std::min(from.size(), to.size());
+                for (size_t i = 0; i < count; ++i)
+                    (*table)[std::to_string((int)(unsigned char)from[i])] = QuantumValue(std::string(1, to[i]));
+            }
+            return QuantumValue(table);
+        }
         if (method == "then" || method == "catch" || method == "json")
         {
-            auto native = obj.asNative();
             if (native->fn)
                 return native->fn(args);
             return method == "json" ? QuantumValue(std::make_shared<Dict>()) : obj;
@@ -467,18 +491,30 @@ QuantumValue VM::callBuiltinMethod(QuantumValue &obj, const std::string &method,
         auto inst = obj.asInstance();
         // Find method in class hierarchy
         auto *k = inst->klass.get();
+        std::vector<std::string> lookupNames{method};
+        if (method == "toString")
+            lookupNames.push_back("__str__");
+        else if (method == "__str__")
+            lookupNames.push_back("toString");
         while (k)
         {
-            auto it = k->methods.find(method);
-            if (it != k->methods.end())
+            std::shared_ptr<Closure> fn;
+            for (const auto &lookup : lookupNames)
             {
-                auto fn = it->second;
+                auto it = k->methods.find(lookup);
+                if (it != k->methods.end())
+                {
+                    fn = it->second;
+                    break;
+                }
+            }
+            if (fn)
+            {
                 push(QuantumValue(fn));
                 push(obj);
                 for (auto &a : args)
                     push(a);
                 callClosure(fn, (int)args.size() + 1, line);
-                // Execute the frame!
                 size_t savedDepth = frames_.size() - 1;
                 runFrame(savedDepth);
                 return pop();

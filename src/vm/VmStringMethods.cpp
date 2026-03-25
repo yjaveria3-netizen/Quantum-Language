@@ -54,7 +54,7 @@ QuantumValue VM::callStringMethod(const std::string &str, const std::string &m,
             return QuantumValue(false);
         return QuantumValue(str.find(args[0].toString()) != std::string::npos);
     }
-    if (m == "indexOf")
+    if (m == "indexOf" || m == "index")
     {
         if (args.empty())
             return QuantumValue(-1.0);
@@ -69,6 +69,25 @@ QuantumValue VM::callStringMethod(const std::string &str, const std::string &m,
         {
             for (char c : str)
                 arr->push_back(QuantumValue(std::string(1, c)));
+        }
+        else if (sep.size() >= 2 && sep.front() == '/' && sep.find_last_of('/') > 0)
+        {
+            size_t lastSlash = sep.find_last_of('/');
+            std::string pattern = sep.substr(1, lastSlash - 1);
+            std::regex::flag_type flags = std::regex::ECMAScript;
+            if (sep.substr(lastSlash + 1).find('i') != std::string::npos)
+                flags |= std::regex::icase;
+            try
+            {
+                std::regex re(pattern, flags);
+                std::sregex_token_iterator it(str.begin(), str.end(), re, -1), end;
+                for (; it != end; ++it)
+                    arr->push_back(QuantumValue(it->str()));
+            }
+            catch (const std::regex_error &)
+            {
+                arr->push_back(QuantumValue(str));
+            }
         }
         else
         {
@@ -130,6 +149,21 @@ QuantumValue VM::callStringMethod(const std::string &str, const std::string &m,
         if (start < 0)
             start = 0;
         return QuantumValue(str.substr(std::min((size_t)start, str.size()), std::max(0, len2)));
+    }
+    if (m == "slice")
+    {
+        int start = args.empty() ? 0 : (int)args[0].asNumber();
+        int end = args.size() > 1 ? (int)args[1].asNumber() : (int)str.size();
+        int n = static_cast<int>(str.size());
+        if (start < 0)
+            start += n;
+        if (end < 0)
+            end += n;
+        start = std::max(0, std::min(start, n));
+        end = std::max(0, std::min(end, n));
+        if (end < start)
+            end = start;
+        return QuantumValue(str.substr(start, end - start));
     }
     if (m == "charAt")
     {
@@ -212,6 +246,22 @@ QuantumValue VM::callStringMethod(const std::string &str, const std::string &m,
             result = result.substr(0, p) + args[idx++].toString() + result.substr(p + 2);
         }
         return QuantumValue(result);
+    }
+    if (m == "translate")
+    {
+        if (args.empty() || !args[0].isDict())
+            return QuantumValue(str);
+        std::string out;
+        auto table = args[0].asDict();
+        for (char c : str)
+        {
+            auto it = table->find(std::to_string((int)(unsigned char)c));
+            if (it != table->end())
+                out += it->second.toString();
+            else
+                out += c;
+        }
+        return QuantumValue(out);
     }
     if (m == "test")
     {

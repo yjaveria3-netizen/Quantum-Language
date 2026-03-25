@@ -238,7 +238,10 @@ ASTNodePtr Parser::parsePrimary()
                 }
             }
         }
+        bool prevInCallArgList = inCallArgList;
+        inCallArgList = true;
         auto expr = parseExpr();
+        inCallArgList = prevInCallArgList;
         skipNewlines();
 
         // ── C-style type cast: (int)x  (unsigned)time(NULL)  (char)c ───────

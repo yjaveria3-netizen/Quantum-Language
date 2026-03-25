@@ -21,6 +21,7 @@ public:
 private:
     std::vector<Token> tokens;
     size_t pos;
+    bool inCallArgList = false;
 
     // Token helpers
     Token &current();

@@ -64,7 +64,7 @@ ASTNodePtr Parser::parseAssignment()
     // ONLY activate when we can confirm via non-consuming lookahead that the
     // pattern is:  IDENT , IDENT , ... IDENT =
     // This prevents false-positives inside argument lists like f(a, b).
-    if (check(TokenType::COMMA) && left->is<Identifier>())
+    if (!inCallArgList && check(TokenType::COMMA) && left->is<Identifier>())
     {
         // Lookahead: scan forward to confirm all commas are followed by
         // identifiers and the sequence ends with '='

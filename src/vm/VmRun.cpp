@@ -3,6 +3,7 @@
 #include "Disassembler.h"
 #include <iostream>
 #include <string>
+#include <unordered_set>
 
 void VM::runFrame(size_t stopDepth)
 {
@@ -336,6 +337,18 @@ void VM::runFrame(size_t stopDepth)
                 break;
             }
 
+            if (callee.isDict())
+            {
+                auto dict = callee.asDict();
+                auto it = dict->find("__call__");
+                if (it != dict->end())
+                {
+                    stack_[stack_.size() - argCount - 1] = it->second;
+                    frame.ip--;
+                    break;
+                }
+            }
+
             if (callee.isClass())
             {
                 auto klass = callee.asClass();
@@ -348,7 +361,7 @@ void VM::runFrame(size_t stopDepth)
                 bool initFound = false;
                 while (k && !initFound)
                 {
-                    for (const char *initName : {"__init__", "init"})
+                    for (const char *initName : {"__init__", "init", "constructor"})
                     {
                         auto it = k->methods.find(initName);
                         if (it != k->methods.end())
@@ -544,6 +557,28 @@ void VM::runFrame(size_t stopDepth)
         {
             const std::string &name = consts[instr.operand].asString();
             QuantumValue obj = pop();
+
+            if (obj.isNil())
+            {
+                static const std::unordered_set<std::string> nilChainMethods = {
+                    "map", "filter", "reduce", "forEach", "flatMap",
+                    "join", "split", "has", "add"};
+                if (nilChainMethods.count(name))
+                {
+                    auto native = std::make_shared<QuantumNative>();
+                    native->name = "__nil_chain__" + name;
+                    native->fn = [](std::vector<QuantumValue>) -> QuantumValue
+                    {
+                        return QuantumValue();
+                    };
+                    push(QuantumValue(native));
+                }
+                else
+                {
+                    push(QuantumValue());
+                }
+                break;
+            }
 
             if (obj.isInstance())
             {
@@ -829,7 +864,7 @@ void VM::runFrame(size_t stopDepth)
             bool initFound = false;
             while (k && !initFound)
             {
-                for (const char *initName : {"__init__", "init"})
+                for (const char *initName : {"__init__", "init", "constructor"})
                 {
                     auto it = k->methods.find(initName);
                     if (it != k->methods.end())

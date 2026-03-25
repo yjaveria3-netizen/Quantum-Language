@@ -137,9 +137,20 @@ ASTNodePtr Parser::parseStatement()
     }
     case TokenType::INPUT:
     {
-        // If followed by '(' it's a user-defined function named "input(...)", not a cin stmt
         if (pos + 1 < tokens.size() && tokens[pos + 1].type == TokenType::LPAREN)
-            return parseExprStmt();
+        {
+            size_t scan = pos + 2;
+            while (scan < tokens.size() && tokens[scan].type == TokenType::NEWLINE)
+                ++scan;
+            bool looksLikeScanf = false;
+            if (scan < tokens.size() && tokens[scan].type == TokenType::STRING)
+            {
+                const std::string &fmt = tokens[scan].value;
+                looksLikeScanf = fmt.find('%') != std::string::npos;
+            }
+            if (!looksLikeScanf)
+                return parseExprStmt();
+        }
         consume();
         return parseInputStmt();
     }

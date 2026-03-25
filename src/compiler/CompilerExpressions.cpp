@@ -16,7 +16,7 @@ void Compiler::compileBinary(BinaryExpr &e, int line)
         patchJump(sc);
         return;
     }
-    if (e.op == "or" || e.op == "||")
+    if (e.op == "or" || e.op == "||" || e.op == "??")
     {
         compileExpr(*e.left);
         size_t sc = emitJump(Op::JUMP_IF_TRUE, line);
@@ -179,15 +179,43 @@ void Compiler::compileAssign(AssignExpr &e, int line)
     if (e.target->is<MemberExpr>())
     {
         auto &mem = e.target->as<MemberExpr>();
-        // VM SET_MEMBER: pops val (top), peeks obj (does not pop obj)
-        // After SET_MEMBER: obj still on stack
-        compileExpr(*mem.object); // stack: obj
-        compileExpr(*e.value);    // stack: obj val
-        emit(Op::SET_MEMBER, addStr(mem.member), line);
-        // stack: obj  (val was popped by SET_MEMBER, obj remains)
-        // For use as expression result: swap obj for a copy of val
-        // Simplest: just leave obj on stack — caller (ExprStmt) pops it anyway
-        // If used as expression, obj != val but that's an edge case
+
+        if (e.op == "post+=" || e.op == "post-=")
+        {
+            compileExpr(*mem.object);
+            emit(Op::GET_MEMBER, addStr(mem.member), line); // old
+            emit(Op::DUP, 0, line);                         // old old
+            compileExpr(*e.value);
+            emit(e.op == "post+=" ? Op::ADD : Op::SUB, 0, line); // old new
+            compileExpr(*mem.object);                               // old new obj
+            emit(Op::SWAP, 0, line);                                // old obj new
+            emit(Op::SET_MEMBER, addStr(mem.member), line);         // old obj
+            emit(Op::POP, 0, line);                                 // old
+            return;
+        }
+
+        if (compound)
+        {
+            compileExpr(*mem.object);
+            emit(Op::GET_MEMBER, addStr(mem.member), line); // old
+            compileExpr(*e.value);
+            auto it = cops.find(normalizedOp);
+            if (it != cops.end())
+                emit(it->second, 0, line);                  // new
+            emit(Op::DUP, 0, line);                         // new new
+            compileExpr(*mem.object);                       // new new obj
+            emit(Op::SWAP, 0, line);                        // new obj new
+            emit(Op::SET_MEMBER, addStr(mem.member), line); // new obj
+            emit(Op::POP, 0, line);                         // new
+            return;
+        }
+
+        compileExpr(*e.value);                              // val
+        emit(Op::DUP, 0, line);                             // val val
+        compileExpr(*mem.object);                           // val val obj
+        emit(Op::SWAP, 0, line);                            // val obj val
+        emit(Op::SET_MEMBER, addStr(mem.member), line);     // val obj
+        emit(Op::POP, 0, line);                             // val
         return;
     }
 
@@ -197,7 +225,7 @@ void Compiler::compileAssign(AssignExpr &e, int line)
 
 void Compiler::compileCall(CallExpr &e, int line)
 {
-    auto emitArgValue = [&](ASTNode &arg)
+    auto emitArgValues = [&](ASTNode &arg) -> int
     {
         if (arg.is<AssignExpr>())
         {
@@ -205,10 +233,22 @@ void Compiler::compileCall(CallExpr &e, int line)
             if (assign.op == "=" && assign.target->is<Identifier>())
             {
                 compileExpr(*assign.value);
-                return;
+                return 1;
+            }
+            if (assign.op == "unpack" && assign.target->is<TupleLiteral>())
+            {
+                auto &targets = assign.target->as<TupleLiteral>().elements;
+                if (!targets.empty())
+                {
+                    for (size_t i = 0; i + 1 < targets.size(); ++i)
+                        compileExpr(*targets[i]);
+                    compileExpr(*assign.value);
+                    return static_cast<int>(targets.size());
+                }
             }
         }
         compileExpr(arg);
+        return 1;
     };
 
     bool hasSpread = false;
@@ -239,7 +279,7 @@ void Compiler::compileCall(CallExpr &e, int line)
             if (isSpread)
                 compileExpr(*arg->as<UnaryExpr>().operand);
             else
-                emitArgValue(*arg);
+                emitArgValues(*arg);
             emit(Op::CALL, 2, line);
         }
         emit(Op::CALL, 2, line);
@@ -247,6 +287,21 @@ void Compiler::compileCall(CallExpr &e, int line)
     }
 
     // super.method(args) -- special case
+    if (e.callee->is<SuperExpr>())
+    {
+        auto &superExpr = e.callee->as<SuperExpr>();
+        if (superExpr.method.empty())
+        {
+            emitLoad("self", line);
+            emit(Op::GET_SUPER, addStr("__init__"), line);
+            int argCount = 0;
+            for (auto &arg : e.args)
+                argCount += emitArgValues(*arg);
+            emit(Op::CALL, argCount, line);
+            return;
+        }
+    }
+
     if (e.callee->is<MemberExpr>())
     {
         auto &mem = e.callee->as<MemberExpr>();
@@ -255,9 +310,10 @@ void Compiler::compileCall(CallExpr &e, int line)
             // Load self (slot 0), GET_SUPER method, push args, CALL
             emitLoad("self", line);
             emit(Op::GET_SUPER, addStr(mem.member), line);
+            int argCount = 0;
             for (auto &arg : e.args)
-                emitArgValue(*arg);
-            emit(Op::CALL, static_cast<int32_t>(e.args.size()), line);
+                argCount += emitArgValues(*arg);
+            emit(Op::CALL, argCount, line);
             return;
         }
         if (mem.object->is<CallExpr>())
@@ -267,25 +323,28 @@ void Compiler::compileCall(CallExpr &e, int line)
             {
                 emitLoad("self", line);
                 emit(Op::GET_SUPER, addStr(mem.member), line);
+                int argCount = 0;
                 for (auto &arg : e.args)
-                    emitArgValue(*arg);
-                emit(Op::CALL, static_cast<int32_t>(e.args.size()), line);
+                    argCount += emitArgValues(*arg);
+                emit(Op::CALL, argCount, line);
                 return;
             }
         }
         // Regular method call: obj.method(args)
         compileExpr(*mem.object);
         emit(Op::GET_MEMBER, addStr(mem.member), line);
+        int argCount = 0;
         for (auto &arg : e.args)
-            emitArgValue(*arg);
-        emit(Op::CALL, static_cast<int32_t>(e.args.size()), line);
+            argCount += emitArgValues(*arg);
+        emit(Op::CALL, argCount, line);
         return;
     }
     // Regular call
     compileExpr(*e.callee);
+    int argCount = 0;
     for (auto &arg : e.args)
-        emitArgValue(*arg);
-    emit(Op::CALL, static_cast<int32_t>(e.args.size()), line);
+        argCount += emitArgValues(*arg);
+    emit(Op::CALL, argCount, line);
 }
 
 void Compiler::compileIndex(IndexExpr &e, int line)
